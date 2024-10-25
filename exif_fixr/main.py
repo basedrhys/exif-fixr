@@ -8,9 +8,60 @@ from tqdm import tqdm
 from PIL import Image
 import piexif
 import ffmpeg
-from typing import Optional, Dict, Any, Tuple, Set, Protocol, Union
+from typing import Optional, Dict, Any, Tuple, Set, Protocol, Union, List
 from loguru import logger
 import sys
+import re
+
+def normalize_filename(filename: str) -> Tuple[str, str, Optional[int]]:
+    """
+    Normalize filename by separating base name, extension, and duplicate number.
+    Examples:
+        IMG_4869.HEIC -> (IMG_4869, .HEIC, None)
+        IMG_4869(1).HEIC -> (IMG_4869, .HEIC, 1)
+        IMG_4869.HEIC(1) -> (IMG_4869, .HEIC, 1)
+    """
+    # Extract extension
+    base, ext = os.path.splitext(filename)
+    
+    # Check for duplicate number in two formats:
+    # 1. before extension: name(1).ext
+    # 2. after extension: name.ext(1)
+    dup_pattern = r'(?:\((\d+)\))'
+    
+    # Check for number before extension
+    pre_match = re.search(f'{dup_pattern}$', base)
+    if pre_match:
+        return base[:pre_match.start()], ext, int(pre_match.group(1))
+    
+    # Check for number after extension
+    post_match = re.search(dup_pattern, ext)
+    if post_match:
+        return base, ext[:post_match.start()], int(post_match.group(1))
+    
+    return base, ext, None
+
+def find_matching_json(media_path: Path) -> Optional[Path]:
+    """Find matching JSON file for a media file, handling duplicate numbers."""
+    base, ext, dup_num = normalize_filename(media_path.name)
+    
+    # List of possible JSON filename patterns
+    possible_patterns = [
+        f"{base}{ext}.json",  # Basic case: IMG_4869.HEIC.json
+        f"{base}.{ext[1:]}({dup_num}).json" if dup_num else None,  # After extension: IMG_4869.HEIC(1).json
+        f"{base}({dup_num}){ext}.json" if dup_num else None  # Before extension: IMG_4869(1).HEIC.json
+    ]
+    
+    # Remove None values
+    patterns = [p for p in possible_patterns if p]
+    
+    # Check each possible pattern
+    for pattern in patterns:
+        json_path = media_path.parent / pattern
+        if json_path.exists():
+            return json_path
+    
+    return None
 
 class MediaMetadata:
     """Data class to store parsed metadata."""
@@ -96,9 +147,6 @@ class ImageHandler:
             if not dry_run:
                 exif_bytes = piexif.dump(exif_dict)
                 piexif.insert(exif_bytes, str(file_path))
-                # logger.info(f"Updated metadata for image: {file_path.name}")
-            # else:
-                # logger.info(f"Dry run: Would update metadata for image: {file_path.name}")
 
             return True
 
@@ -112,7 +160,6 @@ class VideoHandler:
     def apply_metadata(self, file_path: Path, metadata: MediaMetadata, dry_run: bool) -> bool:
         """Apply metadata to video file using FFmpeg."""
         if dry_run:
-            # logger.info(f"Dry run: Would update metadata for video: {file_path.name}")
             return True
 
         temp_path = file_path.with_name(f"{file_path.stem}_temp{file_path.suffix}")
@@ -148,7 +195,6 @@ class VideoHandler:
                 raise Exception(f"FFmpeg error: {result.stderr}")
 
             os.replace(temp_path, file_path)
-            # logger.info(f"Updated metadata for video: {file_path.name}")
             return True
 
         except Exception as e:
@@ -187,6 +233,10 @@ class MediaProcessor:
 
             handler, media_type = handler_info
 
+            # Use the new find_matching_json function if no JSON path is provided
+            if not json_path:
+                json_path = find_matching_json(file_path)
+            
             if not json_path or not json_path.exists():
                 logger.warning(f"No JSON metadata found for: {file_path}")
                 return False
@@ -195,7 +245,6 @@ class MediaProcessor:
                 json_data = json.load(f)
 
             metadata = MediaMetadata(json_data)
-            # logger.info(f"Processing {media_type}: {file_path.name}")
             return handler.apply_metadata(file_path, metadata, dry_run)
 
         except Exception as e:
@@ -261,8 +310,7 @@ def main(directory: str, dry_run: bool, media_type: str, log_dir: str):
     success_count = 0
     with tqdm(total=len(media_files), desc='Processing media files') as pbar:
         for media_path in media_files:
-            json_path = media_path.with_suffix(media_path.suffix + '.json')
-            if processor.process_file(media_path, json_path, dry_run):
+            if processor.process_file(media_path, None, dry_run):
                 success_count += 1
             pbar.update(1)
     
