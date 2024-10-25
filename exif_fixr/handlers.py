@@ -6,9 +6,11 @@ import os
 import piexif
 from loguru import logger
 
+from exif_fixr.metadata import MediaMetadata
+
 class MediaHandler(Protocol):
     """Protocol defining interface for media handlers."""
-    def apply_metadata(self, file_path: Path, metadata: 'MediaMetadata', dry_run: bool) -> bool:
+    def apply_metadata(self, file_path: Path, metadata: MediaMetadata, dry_run: bool) -> bool:
         """Apply metadata to the media file."""
         ...
 
@@ -47,7 +49,7 @@ class ImageHandler:
 
         return gps_ifd
 
-    def apply_metadata(self, file_path: Path, metadata: 'MediaMetadata', dry_run: bool) -> bool:
+    def apply_metadata(self, file_path: Path, metadata: MediaMetadata, dry_run: bool) -> bool:
         """Apply metadata to image file using EXIF."""
         try:
             exif_dict = {'0th': {}, '1st': {}, 'Exif': {}, 'GPS': {}, 'Interop': {}}

@@ -1,9 +1,11 @@
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Set
+from typing import Optional, Tuple
 import json
 from loguru import logger
-from .metadata import MediaMetadata
-from .handlers import MediaHandler, ImageHandler, VideoHandler
+
+from exif_fixr.metadata import MediaMetadata
+from exif_fixr.handlers import MediaHandler, ImageHandler, VideoHandler
+from exif_fixr.utils import find_matching_json
 
 class MediaProcessor:
     """Main processor for handling media files."""

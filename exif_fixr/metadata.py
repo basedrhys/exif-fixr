@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 class MediaMetadata:
     """Data class to store parsed metadata."""
