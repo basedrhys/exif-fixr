@@ -6,22 +6,50 @@ from pathlib import Path
 import click
 from tqdm import tqdm
 from PIL import Image
-from PIL.ExifTags import TAGS, GPSTAGS
 import piexif
 import ffmpeg
-from typing import Optional, Dict, Any, Tuple, Set
+from typing import Optional, Dict, Any, Tuple, Set, Protocol, Union
+from loguru import logger
+import sys
 
-class MetadataProcessor:
-    """Handles the processing of metadata from JSON to EXIF/video metadata format."""
+class MediaMetadata:
+    """Data class to store parsed metadata."""
+    def __init__(self, json_data: Dict[str, Any]):
+        # Extract timestamp
+        photo_time = json_data.get('photoTakenTime', {})
+        self.timestamp = photo_time.get('timestamp')
+        self.formatted_time = (
+            datetime.fromtimestamp(int(self.timestamp)).isoformat()
+            if self.timestamp else None
+        )
+        
+        # Extract GPS data
+        geo_data = json_data.get('geoData', {})
+        self.latitude = geo_data.get('latitude')
+        self.longitude = geo_data.get('longitude')
+        self.altitude = geo_data.get('altitude')
+        
+        # Extract other metadata
+        self.title = json_data.get('title')
+        self.description = json_data.get('description')
+
+class MediaHandler(Protocol):
+    """Protocol defining interface for media handlers."""
+    def apply_metadata(self, file_path: Path, metadata: MediaMetadata, dry_run: bool) -> bool:
+        """Apply metadata to the media file."""
+        ...
+
+class ImageHandler:
+    """Handles metadata application for image files."""
     
     @staticmethod
-    def convert_timestamp_to_exif(timestamp: str) -> bytes:
+    def _convert_to_exif_time(timestamp: str) -> bytes:
         """Convert Unix timestamp to EXIF datetime format."""
         dt = datetime.fromtimestamp(int(timestamp))
         return dt.strftime("%Y:%m:%d %H:%M:%S").encode('utf-8')
-    
+
     @staticmethod
-    def convert_geo_to_exif(lat: float, lon: float, alt: float) -> Dict:
+    def _convert_to_exif_gps(lat: float, lon: float, alt: Optional[float]) -> Dict:
         """Convert decimal GPS coordinates to EXIF format."""
         def decimal_to_dms(decimal: float) -> Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]:
             degrees = int(decimal)
@@ -31,14 +59,12 @@ class MetadataProcessor:
 
         lat_ref = 'N' if lat >= 0 else 'S'
         lon_ref = 'E' if lon >= 0 else 'W'
-        lat = abs(lat)
-        lon = abs(lon)
-
+        
         gps_ifd = {
             piexif.GPSIFD.GPSLatitudeRef: lat_ref.encode('utf-8'),
-            piexif.GPSIFD.GPSLatitude: decimal_to_dms(lat),
+            piexif.GPSIFD.GPSLatitude: decimal_to_dms(abs(lat)),
             piexif.GPSIFD.GPSLongitudeRef: lon_ref.encode('utf-8'),
-            piexif.GPSIFD.GPSLongitude: decimal_to_dms(lon),
+            piexif.GPSIFD.GPSLongitude: decimal_to_dms(abs(lon)),
         }
 
         if alt is not None:
@@ -48,173 +74,205 @@ class MetadataProcessor:
 
         return gps_ifd
 
-    def create_exif_dict(self, metadata: Dict[str, Any]) -> Dict:
-        """Create EXIF dictionary from JSON metadata."""
-        exif_dict = {'0th': {}, '1st': {}, 'Exif': {}, 'GPS': {}, 'Interop': {}}
+    def apply_metadata(self, file_path: Path, metadata: MediaMetadata, dry_run: bool) -> bool:
+        """Apply metadata to image file using EXIF."""
+        try:
+            exif_dict = {'0th': {}, '1st': {}, 'Exif': {}, 'GPS': {}, 'Interop': {}}
 
-        # Add creation time
-        if 'photoTakenTime' in metadata:
-            timestamp = metadata['photoTakenTime']['timestamp']
-            exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = self.convert_timestamp_to_exif(timestamp)
-            exif_dict['0th'][piexif.ImageIFD.DateTime] = self.convert_timestamp_to_exif(timestamp)
+            # Add timestamps
+            if metadata.timestamp:
+                exif_time = self._convert_to_exif_time(metadata.timestamp)
+                exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = exif_time
+                exif_dict['0th'][piexif.ImageIFD.DateTime] = exif_time
 
-        # Add GPS data if available
-        if 'geoData' in metadata:
-            geo = metadata['geoData']
-            if all(k in geo for k in ['latitude', 'longitude']):
-                exif_dict['GPS'] = self.convert_geo_to_exif(
-                    geo['latitude'],
-                    geo['longitude'],
-                    geo.get('altitude')
+            # Add GPS data
+            if all(x is not None for x in [metadata.latitude, metadata.longitude]):
+                exif_dict['GPS'] = self._convert_to_exif_gps(
+                    metadata.latitude,
+                    metadata.longitude,
+                    metadata.altitude
                 )
 
-        return exif_dict
+            if not dry_run:
+                exif_bytes = piexif.dump(exif_dict)
+                piexif.insert(exif_bytes, str(file_path))
+                # logger.info(f"Updated metadata for image: {file_path.name}")
+            # else:
+                # logger.info(f"Dry run: Would update metadata for image: {file_path.name}")
 
-class MediaProcessor:
-    """Handles the processing of media files (images and videos)."""
-    
-    def __init__(self, metadata_processor: MetadataProcessor):
-        self.metadata_processor = metadata_processor
-        self.image_formats = {'.jpg', '.jpeg', '.heic', '.png'}
-        self.video_formats = {'.mp4', '.mov', '.avi', '.m4v'}
-        self.supported_formats = self.image_formats | self.video_formats
-
-    def process_media(self, media_path: Path, json_path: Optional[Path], dry_run: bool = False) -> bool:
-        """Process a single media file and its corresponding JSON metadata."""
-        try:
-            # Check if media format is supported
-            if media_path.suffix.lower() not in self.supported_formats:
-                return False
-
-            # If no JSON file exists, skip
-            if not json_path or not json_path.exists():
-                return False
-
-            # Read metadata from JSON
-            with open(json_path, 'r') as f:
-                metadata = json.load(f)
-
-            if media_path.suffix.lower() in self.image_formats:
-                return self._process_image(media_path, metadata, dry_run)
-            else:
-                return self._process_video(media_path, metadata, dry_run)
-
-        except Exception as e:
-            print(f"Error processing {media_path}: {str(e)}")
-            return False
-
-    def _process_image(self, image_path: Path, metadata: Dict[str, Any], dry_run: bool) -> bool:
-        """Process an image file."""
-        exif_dict = self.metadata_processor.create_exif_dict(metadata)
-        
-        if not dry_run:
-            exif_bytes = piexif.dump(exif_dict)
-            piexif.insert(exif_bytes, str(image_path))
-
-        return True
-
-    def _process_video(self, video_path: Path, metadata: Dict[str, Any], dry_run: bool) -> bool:
-        """Process a video file."""
-        if dry_run:
             return True
 
+        except Exception as e:
+            logger.error(f"Failed to process image {file_path.name}: {e}")
+            return False
+
+class VideoHandler:
+    """Handles metadata application for video files."""
+    
+    def apply_metadata(self, file_path: Path, metadata: MediaMetadata, dry_run: bool) -> bool:
+        """Apply metadata to video file using FFmpeg."""
+        if dry_run:
+            # logger.info(f"Dry run: Would update metadata for video: {file_path.name}")
+            return True
+
+        temp_path = file_path.with_name(f"{file_path.stem}_temp{file_path.suffix}")
         try:
-            # Create temporary file path
-            temp_path = video_path.with_name(f"{video_path.stem}_temp{video_path.suffix}")
-            
-            # Prepare metadata arguments for FFmpeg
             metadata_args = []
             
             # Add creation time
-            if 'photoTakenTime' in metadata:
-                creation_time = datetime.fromtimestamp(int(metadata['photoTakenTime']['timestamp']))
+            if metadata.formatted_time:
                 metadata_args.extend([
-                    '-metadata', f"creation_time={creation_time.isoformat()}"
+                    '-metadata', f"creation_time={metadata.formatted_time}"
                 ])
 
             # Add GPS data
-            if 'geoData' in metadata:
-                geo = metadata['geoData']
-                if all(k in geo for k in ['latitude', 'longitude']):
-                    metadata_args.extend([
-                        '-metadata', f"location={geo['latitude']},{geo['longitude']}"
-                    ])
+            if metadata.latitude is not None and metadata.longitude is not None:
+                metadata_args.extend([
+                    '-metadata', f"location={metadata.latitude},{metadata.longitude}"
+                ])
 
-            # Skip if no metadata to add
             if not metadata_args:
+                logger.warning(f"No metadata to add for video: {file_path.name}")
                 return True
 
-            # Build FFmpeg command
             command = [
-                'ffmpeg', '-i', str(video_path),
-                '-c', 'copy',  # Copy without re-encoding
+                'ffmpeg', '-i', str(file_path),
+                '-c', 'copy',
                 *metadata_args,
-                '-y',  # Overwrite output file if exists
+                '-y',
                 str(temp_path)
             ]
 
-            # Run FFmpeg
             result = subprocess.run(command, capture_output=True, text=True)
             if result.returncode != 0:
                 raise Exception(f"FFmpeg error: {result.stderr}")
 
-            # Replace original file with the new one
-            os.replace(temp_path, video_path)
+            os.replace(temp_path, file_path)
+            # logger.info(f"Updated metadata for video: {file_path.name}")
             return True
 
         except Exception as e:
-            print(f"Error processing video {video_path}: {str(e)}")
-            # Clean up temporary file if it exists
+            logger.error(f"Failed to process video {file_path.name}: {e}")
             if temp_path.exists():
                 temp_path.unlink()
             return False
 
-def find_json_path(media_path: Path) -> Optional[Path]:
-    """Find the corresponding JSON file for a media file."""
-    json_path = media_path.with_suffix(media_path.suffix + '.json')
-    return json_path if json_path.exists() else None
+class MediaProcessor:
+    """Main processor for handling media files."""
+    
+    def __init__(self):
+        self.handlers = {
+            'image': (ImageHandler(), {'.jpg', '.jpeg', '.heic', '.png'}),
+            'video': (VideoHandler(), {'.mp4', '.mov', '.avi', '.m4v'})
+        }
+        self.supported_formats = {
+            ext for _, formats in self.handlers.values() for ext in formats
+        }
+
+    def get_handler(self, file_path: Path) -> Optional[Tuple[MediaHandler, str]]:
+        """Get appropriate handler for the file type."""
+        suffix = file_path.suffix.lower()
+        for media_type, (handler, formats) in self.handlers.items():
+            if suffix in formats:
+                return handler, media_type
+        return None
+
+    def process_file(self, file_path: Path, json_path: Optional[Path], dry_run: bool) -> bool:
+        """Process a single media file."""
+        try:
+            handler_info = self.get_handler(file_path)
+            if not handler_info:
+                logger.warning(f"Unsupported format: {file_path}")
+                return False
+
+            handler, media_type = handler_info
+
+            if not json_path or not json_path.exists():
+                logger.warning(f"No JSON metadata found for: {file_path}")
+                return False
+
+            with open(json_path, 'r') as f:
+                json_data = json.load(f)
+
+            metadata = MediaMetadata(json_data)
+            # logger.info(f"Processing {media_type}: {file_path.name}")
+            return handler.apply_metadata(file_path, metadata, dry_run)
+
+        except Exception as e:
+            logger.error(f"Error processing {file_path}: {e}")
+            return False
+
+def setup_logging(log_dir: Path):
+    """Configure loguru logger."""
+    logger.remove()  # Remove default handler
+    
+    # Add colored stdout handler
+    logger.add(
+        sys.stdout,
+        colorize=True,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
+    )
+    
+    # Add file handler
+    log_file = log_dir / f"metadata_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    logger.add(
+        log_file,
+        rotation="100 MB",
+        retention="1 week",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}"
+    )
 
 @click.command()
 @click.argument('directory', type=click.Path(exists=True))
 @click.option('--dry-run', is_flag=True, help='Run without applying changes')
 @click.option('--type', 'media_type', type=click.Choice(['all', 'images', 'videos']), 
               default='all', help='Type of media files to process')
-def main(directory: str, dry_run: bool, media_type: str):
+@click.option('--log-dir', type=click.Path(), default='logs',
+              help='Directory to store log files')
+def main(directory: str, dry_run: bool, media_type: str, log_dir: str):
     """Restore metadata to Google Takeout media files from their JSON files."""
+    # Setup logging
+    log_dir_path = Path(log_dir)
+    log_dir_path.mkdir(exist_ok=True)
+    setup_logging(log_dir_path)
+    
     directory_path = Path(directory)
-    metadata_processor = MetadataProcessor()
-    media_processor = MediaProcessor(metadata_processor)
+    processor = MediaProcessor()
     
-    # Determine which formats to process based on media_type
+    logger.info(f"Starting metadata restoration in: {directory}")
+    logger.info(f"Dry run: {dry_run}")
+    logger.info(f"Media type: {media_type}")
+    
+    # Filter formats based on media type
+    formats = processor.supported_formats
     if media_type == 'images':
-        formats = media_processor.image_formats
+        formats = processor.handlers['image'][1]
     elif media_type == 'videos':
-        formats = media_processor.video_formats
-    else:
-        formats = media_processor.supported_formats
+        formats = processor.handlers['video'][1]
     
-    # Find all media files recursively
+    # Find all media files
     media_files = []
     for ext in formats:
         media_files.extend(directory_path.rglob(f'*{ext}'))
     
-    # Process each media file
+    logger.info(f"Found {len(media_files)} files to process")
+    
+    # Process files
     success_count = 0
     with tqdm(total=len(media_files), desc='Processing media files') as pbar:
         for media_path in media_files:
-            json_path = find_json_path(media_path)
-            if media_processor.process_media(media_path, json_path, dry_run):
+            json_path = media_path.with_suffix(media_path.suffix + '.json')
+            if processor.process_file(media_path, json_path, dry_run):
                 success_count += 1
             pbar.update(1)
     
-    # Print summary
-    total_files = len(media_files)
-    print(f"\nSummary:")
-    print(f"Total files processed: {total_files}")
-    print(f"Successfully processed: {success_count}")
-    print(f"Skipped/Failed: {total_files - success_count}")
+    # Log summary
+    logger.info("\nProcessing Summary:")
+    logger.info(f"Total files processed: {len(media_files)}")
+    logger.info(f"Successfully processed: {success_count}")
+    logger.info(f"Skipped/Failed: {len(media_files) - success_count}")
     if dry_run:
-        print("\nThis was a dry run - no changes were applied.")
+        logger.info("This was a dry run - no changes were applied.")
 
 if __name__ == '__main__':
     main()
