@@ -34,11 +34,12 @@ def normalize_filename(filename: str) -> Tuple[str, str, Optional[int]]:
     return base, ext, None
 
 def find_matching_json(media_path: Path) -> Optional[Path]:
-    """Find matching JSON file for a media file, handling duplicate numbers."""
+    """Find matching JSON file for a media file, handling duplicate numbers and slight name variations."""
     base, ext, dup_num = normalize_filename(media_path.name)
-    
+
     # List of possible JSON filename patterns
     possible_patterns = [
+        f"{base}.json", # 78044395_436295793702108_2641810795809210368_n.jpg
         f"{base}{ext}.json",  # Basic case: IMG_4869.HEIC.json
         f"{base}.{ext[1:]}({dup_num}).json" if dup_num else None,  # After extension: IMG_4869.HEIC(1).json
         f"{base}({dup_num}){ext}.json" if dup_num else None  # Before extension: IMG_4869(1).HEIC.json
@@ -50,6 +51,20 @@ def find_matching_json(media_path: Path) -> Optional[Path]:
     # Check each possible pattern
     for pattern in patterns:
         json_path = media_path.parent / pattern
+        if json_path.exists():
+            return json_path
+    
+    # If no exact match found, try matching with one less digit
+    base_without_last_digit = base[:-1]
+    for pattern in patterns:
+        json_path = media_path.parent / pattern.replace(base, base_without_last_digit)
+        if json_path.exists():
+            return json_path
+    
+    # Handle the case where image name ends with '_n' and JSON doesn't
+    if base.endswith('_n'):
+        base_without_n = base[:-2]
+        json_path = media_path.parent / f"{base_without_n}_.json"
         if json_path.exists():
             return json_path
     
