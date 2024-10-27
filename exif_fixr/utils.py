@@ -37,6 +37,10 @@ def find_matching_json(media_path: Path) -> Optional[Path]:
     """Find matching JSON file for a media file, handling duplicate numbers and slight name variations."""
     base, ext, dup_num = normalize_filename(media_path.name)
 
+    # Handle -edited suffix by removing it from base name
+    if base.endswith('-edited'):
+        base = base[:-7]  # Remove '-edited' suffix
+
     # List of possible JSON filename patterns
     possible_patterns = [
         f"{base}.json", # 78044395_436295793702108_2641810795809210368_n.jpg
