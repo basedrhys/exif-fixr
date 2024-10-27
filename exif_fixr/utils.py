@@ -46,7 +46,9 @@ def find_matching_json(media_path: Path) -> Optional[Path]:
         f"{base}.json", # 78044395_436295793702108_2641810795809210368_n.jpg
         f"{base}{ext}.json",  # Basic case: IMG_4869.HEIC.json
         f"{base}.{ext[1:]}({dup_num}).json" if dup_num else None,  # After extension: IMG_4869.HEIC(1).json
-        f"{base}({dup_num}){ext}.json" if dup_num else None  # Before extension: IMG_4869(1).HEIC.json
+        f"{base}({dup_num}){ext}.json" if dup_num else None,  # Before extension: IMG_4869(1).HEIC.json
+        f"{base}..json",  # Handle double dot case
+        f"{base}.j.json"  # Handle .j.json case
     ]
     
     # Remove None values
