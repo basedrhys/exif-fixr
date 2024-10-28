@@ -49,7 +49,7 @@ class ImageHandler:
 
         return gps_ifd
 
-    def apply_metadata(self, file_path: Path, metadata: MediaMetadata, dry_run: bool) -> bool:
+    def apply_metadata(self, file_path: Path, metadata: MediaMetadata, dry_run: bool, output_dir: Optional[Path] = None) -> bool:
         """Apply metadata to image file using EXIF."""
         try:
             exif_dict = {'0th': {}, '1st': {}, 'Exif': {}, 'GPS': {}, 'Interop': {}}
@@ -69,8 +69,18 @@ class ImageHandler:
                 )
 
             if not dry_run:
+                # Determine output path
+                output_path = file_path
+                if output_dir:
+                    rel_path = file_path.relative_to(file_path.parent)
+                    output_path = output_dir / rel_path
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Copy file to output directory first
+                    import shutil
+                    shutil.copy2(file_path, output_path)
+
                 exif_bytes = piexif.dump(exif_dict)
-                piexif.insert(exif_bytes, str(file_path))
+                piexif.insert(exif_bytes, str(output_path))
 
             return True
 
@@ -81,12 +91,11 @@ class ImageHandler:
 class VideoHandler:
     """Handles metadata application for video files."""
     
-    def apply_metadata(self, file_path: Path, metadata: 'MediaMetadata', dry_run: bool) -> bool:
+    def apply_metadata(self, file_path: Path, metadata: 'MediaMetadata', dry_run: bool, output_dir: Optional[Path] = None) -> bool:
         """Apply metadata to video file using FFmpeg."""
         if dry_run:
             return True
 
-        temp_path = file_path.with_name(f"{file_path.stem}_temp{file_path.suffix}")
         try:
             metadata_args = []
             
@@ -106,6 +115,15 @@ class VideoHandler:
                 logger.warning(f"No metadata to add for video: {file_path.name}")
                 return True
 
+            # Determine output path
+            output_path = file_path
+            if output_dir:
+                rel_path = file_path.relative_to(file_path.parent)
+                output_path = output_dir / rel_path
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            temp_path = output_path.with_name(f"{output_path.stem}_temp{output_path.suffix}")
+
             command = [
                 'ffmpeg', '-i', str(file_path),
                 '-c', 'copy',
@@ -118,7 +136,7 @@ class VideoHandler:
             if result.returncode != 0:
                 raise Exception(f"FFmpeg error: {result.stderr}")
 
-            os.replace(temp_path, file_path)
+            os.replace(temp_path, output_path)
             return True
 
         except Exception as e:

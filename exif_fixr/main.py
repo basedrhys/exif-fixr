@@ -34,7 +34,9 @@ def setup_logging(log_dir: Path):
               default='all', help='Type of media files to process')
 @click.option('--log-dir', type=click.Path(), default='logs',
               help='Directory to store log files')
-def main(directory: str, dry_run: bool, media_type: str, log_dir: str):
+@click.option('--output-dir', type=click.Path(),
+              help='Directory to save modified files. If not specified, original files will be modified.')
+def main(directory: str, dry_run: bool, media_type: str, log_dir: str, output_dir: str):
     """Restore metadata to Google Takeout media files from their JSON files."""
     # Setup logging
     log_dir_path = Path(log_dir)
@@ -42,6 +44,13 @@ def main(directory: str, dry_run: bool, media_type: str, log_dir: str):
     setup_logging(log_dir_path)
     
     directory_path = Path(directory)
+    output_dir_path = Path(output_dir) if output_dir else None
+    
+    # Create output directory if specified
+    if output_dir_path:
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Output directory: {output_dir_path}")
+    
     processor = MediaProcessor()
     
     logger.info(f"Starting metadata restoration in: {directory}")
@@ -67,7 +76,7 @@ def main(directory: str, dry_run: bool, media_type: str, log_dir: str):
     failed_files = []
     with tqdm(total=len(media_files), desc='Processing media files') as pbar:
         for media_path in media_files:
-            if processor.process_file(media_path, None, dry_run):
+            if processor.process_file(media_path, None, dry_run, output_dir_path):
                 success_count += 1
             else:
                 failed_files.append(media_path)

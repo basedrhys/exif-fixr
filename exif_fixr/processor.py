@@ -31,7 +31,7 @@ class MediaProcessor:
                 return handler, media_type
         return None
 
-    def process_file(self, file_path: Path, json_path: Optional[Path], dry_run: bool) -> bool:
+    def process_file(self, file_path: Path, json_path: Optional[Path], dry_run: bool, output_dir: Optional[Path] = None) -> bool:
         """Process a single media file."""
         try:
             handler_info = self.get_handler(file_path)
@@ -53,7 +53,7 @@ class MediaProcessor:
                 json_data = json.load(f)
 
             metadata = MediaMetadata(json_data)
-            return handler.apply_metadata(file_path, metadata, dry_run)
+            return handler.apply_metadata(file_path, metadata, dry_run, output_dir)
 
         except Exception as e:
             logger.error(f"Error processing {file_path}: {e}")
