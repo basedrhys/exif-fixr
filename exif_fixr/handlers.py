@@ -76,18 +76,18 @@ class ImageHandler:
                     output_path = output_dir / rel_path
                     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-                # For HEIC files, convert to JPG first
-                if file_path.suffix.lower() == '.heic':
+                # For HEIC or PNG files, convert to JPG first
+                if file_path.suffix.lower() in ['.heic', '.png']:
                     # Change output extension to jpg
                     output_path = output_path.with_suffix('.jpg')
                     
-                    # Convert HEIC to JPG using sips
+                    # Convert HEIC/PNG to JPG using sips
                     command = ['sips', '-s', 'format', 'jpeg', str(file_path), '--out', str(output_path)]
                     result = subprocess.run(command, capture_output=True, text=True)
                     if result.returncode != 0:
-                        raise Exception(f"HEIC conversion error: {result.stderr}")
+                        raise Exception(f"Image conversion error: {result.stderr}")
                 else:
-                    # Copy non-HEIC files directly
+                    # Copy other files directly
                     import shutil
                     shutil.copy2(file_path, output_path)
 
