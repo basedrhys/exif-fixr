@@ -72,10 +72,22 @@ class ImageHandler:
                 # Determine output path
                 output_path = file_path
                 if output_dir:
-                    rel_path = file_path.relative_to(file_path.parent)
+                    rel_path = file_path.relative_to("/Users/rhyscompton/Downloads/takeout/Takeout/google_photos")
                     output_path = output_dir / rel_path
                     output_path.parent.mkdir(parents=True, exist_ok=True)
-                    # Copy file to output directory first
+
+                # For HEIC files, convert to JPG first
+                if file_path.suffix.lower() == '.heic':
+                    # Change output extension to jpg
+                    output_path = output_path.with_suffix('.jpg')
+                    
+                    # Convert HEIC to JPG using sips
+                    command = ['sips', '-s', 'format', 'jpeg', str(file_path), '--out', str(output_path)]
+                    result = subprocess.run(command, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        raise Exception(f"HEIC conversion error: {result.stderr}")
+                else:
+                    # Copy non-HEIC files directly
                     import shutil
                     shutil.copy2(file_path, output_path)
 
@@ -87,7 +99,6 @@ class ImageHandler:
         except Exception as e:
             logger.error(f"Failed to process image {file_path.name}: {e}")
             return False
-
 class VideoHandler:
     """Handles metadata application for video files."""
     
@@ -118,7 +129,7 @@ class VideoHandler:
             # Determine output path
             output_path = file_path
             if output_dir:
-                rel_path = file_path.relative_to(file_path.parent)
+                rel_path = file_path.relative_to("/Users/rhyscompton/Downloads/takeout/Takeout/google_photos")
                 output_path = output_dir / rel_path
                 output_path.parent.mkdir(parents=True, exist_ok=True)
             
