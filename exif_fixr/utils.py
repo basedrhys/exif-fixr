@@ -73,5 +73,16 @@ def find_matching_json(media_path: Path) -> Optional[Path]:
         json_path = media_path.parent / f"{base_without_n}_.json"
         if json_path.exists():
             return json_path
+            
+    # Check if there's a HEIC or JPG file with the same base name that has a JSON
+    if ext.lower() != '.heic':
+        heic_json = media_path.parent / f"{base}.HEIC.json"
+        if heic_json.exists():
+            return heic_json
+            
+    if ext.lower() != '.jpg':
+        jpg_json = media_path.parent / f"{base}.JPG.json"
+        if jpg_json.exists():
+            return jpg_json
     
     return None

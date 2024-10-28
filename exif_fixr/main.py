@@ -60,14 +60,17 @@ def main(directory: str, dry_run: bool, media_type: str, log_dir: str):
     for ext in formats:
         media_files.extend(directory_path.rglob(f'*{ext}'))
     
-    logger.info(f"Found {len(media_files)} files to process")
+    logger.info(f"Found {len(media_files)} files (with {formats = }) to process")
     
     # Process files
     success_count = 0
+    failed_files = []
     with tqdm(total=len(media_files), desc='Processing media files') as pbar:
         for media_path in media_files:
             if processor.process_file(media_path, None, dry_run):
                 success_count += 1
+            else:
+                failed_files.append(media_path)
             pbar.update(1)
     
     # Log summary
