@@ -69,6 +69,7 @@ def main(directory: str, dry_run: bool, media_type: str, log_dir: str, output_di
     for ext in formats:
         media_files.extend(directory_path.rglob(f'*{ext}'))
     
+    media_files = sorted(media_files)
     logger.info(f"Found {len(media_files)} files (with {formats = }) to process")
     
     # Process files

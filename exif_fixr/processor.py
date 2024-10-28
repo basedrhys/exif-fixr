@@ -12,7 +12,7 @@ class MediaProcessor:
     
     def __init__(self):
         self.handlers = {
-            'image': (ImageHandler(), {'.jpg', '.jpeg', '.heic', '.png', '.gif', '.tif', '.tiff'}),
+            'image': (ImageHandler(), {'.jpg', '.jpeg', '.heic', '.png', '.tif', '.tiff'}),
             'video': (VideoHandler(), {'.mp4', '.mov', '.avi', '.m4v'})
         }
         # Add uppercase versions of extensions to supported formats
